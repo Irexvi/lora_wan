@@ -1,27 +1,15 @@
 /*
-   Copyright (c) 2020 Boot&Work Corp., S.L. All rights reserved
 
-   This program is free software: you can redistribute it and/or modify
-   it under the terms of the GNU Lesser General Public License as published by
-   the Free Software Foundation, either version 3 of the License, or
-   (at your option) any later version.
-
-   This program is distributed in the hope that it will be useful,
-   but WITHOUT ANY WARRANTY; without even the implied warranty of
-   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   GNU Lesser General Public License for more details.
-
-   You should have received a copy of the GNU Lesser General Public License
-   along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+// 172.20.10.64
+
+#include <avr/wdt.h>
 #include <LoRa.h>
 #include <SPI.h>
 #include <Ethernet.h>
 #include <ModbusTCPMaster.h>
 #include <ModbusTCPSlave.h>
-#include <LoRa.h>
-uint32_t nivel = 0UL;
 #include <EthernetUdp.h>
 #include <ArduinoJson.h>
 #include <math.h>
@@ -30,73 +18,124 @@ uint32_t nivel = 0UL;
 #include <TimeLib.h>
 #include <Wire.h>
 #include <DS1307RTC.h>  // a basic DS1307 library that returns time as a time_t
-
-
-
-// Data constant for the setupRTCini() used only if NTP is not available
-
-const int YEAR = 2020;
-const int MONTH = 02;
-const int DAY = 22;
-const int HOUR = 11;
-const int MINUTE = 50;
-const int SECOND = 00;
-char* valor;
-char* location;
-
-
-// Variable to save the Time for calculation
-int savedHour;
-int savedSecond;
-int savedMinute;
-int savedYear;
-int savedMonth;
-int savedDay;
-int savedTime;
-int hora_panama;
+#define NOMBRE "NAME"
+float lvl = 0;
+float site_vol = 0;
+float caudal = 0;
 uint32_t lastSentTime = 0UL;
 uint32_t lastSentTime1 = 0UL;
 uint32_t lastSentTime2 = 0UL;
 uint32_t lastSentTime8 = 0UL;
+const uint32_t baudrate = 19200UL;
 // libraries needed for MQTT communication
 #include <PubSubClient.h>
-uint32_t counter = 0UL;
 
-IPAddress broker(172, 20, 10, 127);                      //define IP broker (Cambiar a la IP del servidor)
-IPAddress namesServer(8, 8, 8, 8);                          //serverName:admin serverPassword:mxadm
-IPAddress netmask(255, 255, 255, 0);
-IPAddress gateway(172, 20, 10, 1);                         //define IP gateway 
+IPAddress broker(X, X, X, X);        //define IP broker 
+IPAddress namesServer(8, 8, 8, 8);   //define nameServer                       
+IPAddress netmask(255, 255, 255, 0); //define Netmask gateway 
+IPAddress gateway(X, X, X, X);       //define IP gateway 
 
 // Ethernet configuration values
-uint8_t mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
-uint8_t ip[] = { 172, 20, 10, 301 }; // CAMBIAR A IP DE COSTA DEL ESTE.
-
+uint8_t mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEF }; //define Mac Address
+uint8_t ip[] = { X, X, X, X }; // define IP of controller
+////////////////////////////////////////////////////////////////////////////////////////////////////
 //MQTT
-char mqttUsername[] = "telegraf";                           //Nombre de usuario MQTT
-char mqttPassword[] = "telegraf";                           //Contraseña MQTT
-short port_MQTT = 1883;                                     //define el puerto MQTT
+char mqttUsername[] = "USERNAME";                           //Name of MQTT User
+char mqttPassword[] = "PASSWORD";                           //Contraseña MQTT
+short port_MQTT = 1883;                                     //define MQTT port
 #define MQTT_ID ""
+
 // Initialize client MQTT
 void callback(char*topic, byte*payload, unsigned int length);
 EthernetClient client;
 PubSubClient mqtt(broker, 1883, callback, client);
 
-#define LUGAR "NELSON_COLLADO"
-#define SUCURSAL "CHITRE"
-#define TOPICO "sensores/nelson_collado"
+// variables and constants for NTP
+unsigned int udpPort = 8888;
+const char timeServer[] = "time.nist.gov";
+EthernetUDP udp;
+const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
+byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 
+// Modbus registers mapping
+// utiliza M-Duino38AR+ mapping
+int digitalOutputsPins[] = {
+#ifdef defined(PIN_R1_8)
+  Q0_0, Q0_1, Q0_2, Q0_3, Q0_4, Q0_5, Q0_6, Q0_7, Q1_0, Q1_1, Q1_2,
+  R1_1, R1_2, R1_3, R1_4, R1_5, R1_6, R1_7, R1_8
+#endif
+};
+
+int digitalInputsPins[] = {
+#ifdef defined(PIN_I1_5)
+  I0_0, I0_1, I0_2, I0_3, I0_4, I0_5, I0_6, I0_7, I0_8, I0_9, I0_10, I0_11, I0_12,
+  I1_0, I1_1, I1_2, I1_3, I1_4, I1_5
+#endif
+};
+int analogOutputsPins[] = {
+#ifdef defined(PIN_A0_7)
+  A1_0, A1_1, A1_2, A0_5, A0_6, A0_7
+#endif
+};
+int analogInputsPins[] = {
+#ifdef defined(PIN_I1_5)
+  I0_7, I0_8, I0_9, I0_10, I0_11, I0_12, I1_2, I1_3, I1_4, I1_5
+#endif
+};
+
+#define numDigitalOutputs int(sizeof(digitalOutputsPins) / sizeof(int))
+#define numDigitalInputs int(sizeof(digitalInputsPins) / sizeof(int))
+#define numAnalogOutputs int(sizeof(analogOutputsPins) / sizeof(int))
+#define numAnalogInputs int(sizeof(analogInputsPins) / sizeof(int))
+
+bool digitalOutputs[numDigitalOutputs];
+bool digitalInputs[numDigitalInputs];
+uint16_t analogOutputs[numAnalogOutputs];
+float analogInputs[numAnalogInputs + 23];
+
+#define PI 3.1415926535897932384626433832795
+
+float tank_volume(float r, float h, float l){
+  float vol;
+  float left_v;
+  float right_v;
+  float cos_inv;
+  
+  left_v = (sqrt(2*h*r-pow(h,2)))*(h-r);
+  cos_inv=acos( (h-r)/r );
+  right_v =(pow(r,2)*(PI-cos_inv))*l;
+  vol = left_v + right_v;
+  return vol;
+}
+
+
+void sendRequest(const char * address) {
+  memset(packetBuffer, 0, NTP_PACKET_SIZE);
+
+  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
+  packetBuffer[1] = 0;     // Stratum, or type of clock
+  packetBuffer[2] = 6;     // Polling Interval
+  packetBuffer[3] = 0xEC;  // Peer Clock Precision
+  packetBuffer[12] = 49;
+  packetBuffer[13] = 0x4E;
+  packetBuffer[14] = 49;
+  packetBuffer[15] = 52;
+
+  Serial.println(F("Send request"));
+
+
+  if (!udp.beginPacket(address, 123)) {
+    Serial.println(F("Begin packet error"));
+  } else {
+    udp.write(packetBuffer, NTP_PACKET_SIZE);
+    if (!udp.endPacket()) {
+      Serial.println(F("End packet error"));
+    }
+  }
+}
 
 void callback(char*topic, byte*payload, unsigned int length)
 {
-  StaticJsonDocument<256> doc;
-
-  DeserializationError error = deserializeJson(doc, payload, length);
-  // Test if parsing succeeds.
-  if (error) {
-    Serial.print(F("deserializeJson() failed: "));
-    Serial.println(error.c_str());
-    return;
-  }
 }
 
 void setup_MQTT()
@@ -104,77 +143,38 @@ void setup_MQTT()
 
   mqtt.setServer(broker, port_MQTT);
   mqtt.setCallback(callback); //Definicion de callback
-
 }
-////////////////////////////////////////////////////////////////////////////////////////////////////
-void setup() {
-  Serial.begin(9600L);
 
-  // Begin LoRa hardware
-  if (!LoRa.begin()) {
-    Serial.println("LoRa begin error: is LoRa module connected?");
-    while (true);
+void setup_processIMAGE() {
+
+  // Init variables, inputs and outputs
+  for (int i = 0; i < numDigitalOutputs; ++i) {
+    digitalOutputs[i] = false;
+    digitalWrite(digitalOutputsPins[i], digitalOutputs[i]);
   }
-
-  // Default LoRa values after begin:
-  // Frequency: 434.0MHz
-  // Modulation GFSK_Rb250Fd250
-  // TX power: +13dBm
-
-  // Set LoRa working frequency
-  if (!LoRa.setFrequency(869.0)) {
-    Serial.println("LoRa set frequency error");
-    while (true);
+  for (int i = 0; i < numDigitalInputs; ++i) {
+    digitalInputs[i] = digitalRead(digitalInputsPins[i]);
   }
-
-  Serial.println("Send started");
-
-  // init Ethernet connection.
-  Ethernet.begin(mac, ip);
-  Serial.println(Ethernet.localIP());
-  
-  setup_MQTT();
+  for (int i = 0; i < numAnalogOutputs; ++i) {
+    analogOutputs[i] = 0;
+    analogWrite(analogOutputsPins[i], analogOutputs[i]);
+  }
+  for (int i = 0; i < numAnalogInputs + 2; ++i) {
+    analogInputs[i] = analogRead(analogInputsPins[i]);
+  }
 }
-////////////////////////////////////////////////////////////////////////////////////////////////////
-String digitalClockDisplay() {
-  // digital clock display of the time
 
-  /*
-    Serial.print(hour());
-    printDigits(minute());
-    printDigits(second());
-    Serial.print(" ");
-    Serial.print(day());
-    Serial.print(" ");
-    Serial.print(month());
-    Serial.print(" ");
-    Serial.print(year());
-    Serial.println();
-  */
-
-  return (String(hour()) + printDigits(minute()) + printDigits(second()) + " " + String(day()) + "/" + String(month()) + "/" + String(year()));
-}
-////////////////////////////////////////////////////////////////////////////////////////////////////
-String printDigits(int digits) {
-  // utility function for digital clock display: prints preceding colon and leading 0
-  //Serial.print(":");
-  if (digits < 10)
-    //Serial.print('0');
-    return ":0" + String(digits);
-  //Serial.print(digits);
-
-  return (":" + String(digits));
-}
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void reconnect() {
   if (mqtt.connect(MQTT_ID, mqttUsername, mqttPassword)) {
-    mqtt.subscribe("sensores/control"); //Topico de Control
+    Serial.println("Se conectó mqtt.");
+    mqtt.subscribe("sensores");
   } else {
     // MQTT connect fail
-    Serial.println(digitalClockDisplay() + " - Error MQTT");
+    Serial.println("Error MQTT");
   }
 }
-///////////////////////////////////////////////////////////////////////////////////////////////////
+
 void loop_MQTT() {
 
   if (millis() - lastSentTime8 > 1000) {
@@ -194,30 +194,113 @@ void loop_MQTT() {
 
   }
 }
-////////////////////////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////////////////////////
-void loop() {
-  // Wait packets from Send example
-  if (LoRa.available()) {
-    uint32_t value;
-    uint8_t len = sizeof(value);
 
-    // Save the received packet payload into value
-    if (LoRa.recv((uint8_t *) &value, &len)) {
-      //Serial.print("Received value: ");
-      //Serial.println(value);
+void loop_processIMAGE() {
 
-      char valtem[15];
-      String payload;
-      //Payload para los 5 registros del primer esclavo.
-      dtostrf(value, 2, 2, valtem); //convierto en String tank_h
-      payload = String(LUGAR)+String(",")+String("Sucursal=")+String(SUCURSAL)+String(",Sensor=NIVL");
-      //Serial.println(payload);
-      payload = payload + " Valor=" + valtem;
-      Serial.println(payload);
-      mqtt.publish(TOPICO, (char*) payload.c_str());
-    }
+  // Update inputs
+  for (int i = 0; i < numDigitalInputs; ++i) {
+    digitalInputs[i] = digitalRead(digitalInputsPins[i]);
+  }
+  for (int i = 0; i < numAnalogInputs; ++i) {
+    analogInputsPins[i] = analogRead(analogInputsPins[i]);
   }
 
+  // Process modbus requests desde Master Modbus TCP
+  //Modbus_update(); //Arreglar este pedazo de código
+
+  // Update outputs
+  for (int i = 0; i < numDigitalOutputs; ++i) {
+    digitalWrite(digitalOutputsPins[i], digitalOutputs[i]);
+  }
+  for (int i = 0; i < numAnalogOutputs; ++i) {
+    analogWrite(analogOutputsPins[i], analogOutputs[i]);
+  }
+}
+
+void setup() {
+  Serial.begin(9600L);
+
+  // Begin LoRa hardware
+  if (!LoRa.begin()) {
+    Serial.println("LoRa begin error: is LoRa module connected?");
+    while (true);
+  }
+
+  // SET FREQUENCY OF COUNTRY
+  if (!LoRa.setFrequency(X)) {
+    Serial.println("LoRa set frequency error");
+    while (true);
+  }
+  Serial.println("Send started");
+  
+  // init Ethernet connection.
+  Ethernet.begin(mac, ip);
+  Serial.println(Ethernet.localIP());
+  //setup_RTC();
+  setup_processIMAGE();
+  setup_MQTT();
+  wdt_enable(WDTO_4S);
+
+
+  
+  
+  Serial.println("Inicio de programa...");
+}
+
+void receive_LoRaWAN_upload_mqtt(){
+  if (LoRa.available()) {
+    
+    uint8_t value[46];
+    uint8_t len = sizeof(value);
+    
+    // Save the received packet payload into value
+    if (LoRa.recv((uint8_t *) &value, &len)) {
+
+      char json[46];
+      
+      String str = (char*)value;
+
+      StaticJsonDocument<256> doc;
+      
+      DeserializationError error = deserializeJson(doc, str);
+
+      Serial.println(str);
+
+  // Test if parsing succeeds.
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
+
+
+     // LoRa.isChannelActive;
+      float caudal = doc["CAUD"];
+      float lvl = doc["LVL"];
+      
+      char valtem2[15];
+      String payload;
+      // Envío MQTT
+      dtostrf(caudal, 2, 2, valtem2); //convierto en String caudal
+      payload = "Sie,Place="+String(NAME)+",Sensor=CAUD";
+      payload = payload + " Valor=" + valtem2;
+      mqtt.publish("sensors", (char*) payload.c_str());
+
+      dtostrf(nivel, 2, 2, valtem2); //convierto en String nivel
+      payload = "Site,Place="+String(NAME)+",Sensor=LVL";
+      payload = payload + " Valor=" + valtem2;
+      mqtt.publish("sensors", (char*) payload.c_str());
+
+      
+      
+      wdt_reset();
+      }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void loop() {
+  receive_LoRaWAN_upload_mqtt();
+  loop_processIMAGE();
   loop_MQTT(); // MQTT
 }
