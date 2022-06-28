@@ -1,5 +1,5 @@
-# Nelson_Collado
-Sistema de monitoreo para el hospital Nelson Collado.
+# LoRaWAN
+Sistema de monitoreo.
 Extracción por TCP/IP de un sensor de nivel y caudal.
 
 ¡Buen día señores!,
